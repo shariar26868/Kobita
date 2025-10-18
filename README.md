@@ -38,5 +38,5 @@ A Gradio-based application where AI poets with distinct personas compete to crea
 ### Installation
 1. Clone the repository:
    ```bash
-   git clone https://github.com/your-username/poetry-duel.git
-   cd poetry-duel
+   git clone https://github.com/shariar26868/Kobita.git
+   cd kobita
