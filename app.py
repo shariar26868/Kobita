@@ -8,11 +8,20 @@ from core.judge import PoetryJudge
 from core.document_processor import DocumentProcessor
 from core.audio_generator import AudioGenerator
 from config.settings import POET_PERSONAS, JUDGING_CRITERIA, DEFAULT_VERSES, MIN_VERSES, MAX_VERSES
+
 env_path = Path('.') / '.env'
 load_dotenv(dotenv_path=env_path)
-api_key = os.getenv("OPENAI_API_KEY")
+
+api_key = os.getenv("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+
 if not api_key:
-    raise ValueError("OPENAI_API_KEY not found. Please set it in .env file")
+    raise ValueError(
+        "OPENAI_API_KEY not found. Please add it as a secret in your Hugging Face Space settings:\n"
+        "Settings > Repository secrets > New secret\n"
+        "Name: OPENAI_API_KEY\n"
+        "Value: your-openai-api-key"
+    )
+
 client = OpenAI(api_key=api_key)
 
 def process_document(file):
@@ -36,17 +45,17 @@ def run_poetry_duel(file, persona_a, persona_b, num_verses, progress=gr.Progress
     """Run the complete poetry duel automatically"""
     
     if file is None:
-        return "Please upload a document first!", "", "", "", None
+        return "Please upload a document first!", "", "", "", "", None
     
     if persona_a == persona_b:
-        return "Please select two different poet personas!", "", "", "", None
+        return "Please select two different poet personas!", "", "", "", "", None
     
     try:
         progress(0, desc="Processing document...")
         document_text = DocumentProcessor.extract_text(file)
         
         if not document_text or len(document_text.strip()) < 100:
-            return "Could not extract sufficient text from document.", "", "", "", None
+            return "Could not extract sufficient text from document.", "", "", "", "", None
         
         progress(0.05, desc="Initializing poets...")
         
@@ -61,11 +70,17 @@ def run_poetry_duel(file, persona_a, persona_b, num_verses, progress=gr.Progress
         poem_lines = []
         poet_names = []
         
+        # Get icons with defaults
+        icon_a = poet_a_config.get('icon', '🎭')
+        icon_b = poet_b_config.get('icon', '🎭')
+        full_title_a = poet_a_config.get('full_title', poet_a_config.get('style', 'Poet'))
+        full_title_b = poet_b_config.get('full_title', poet_b_config.get('style', 'Poet'))
+        
         # Intro
         duel_info = f"""
 # 🎭 Poetry Duel Arena
 
-**{poet_a.name}** ({poet_a_config['icon']} {poet_a_config['full_title']}) **{poet_b.name}** ({poet_b_config['icon']} {poet_b_config['full_title']})
+**{poet_a.name}** ({icon_a} {full_title_a}) vs **{poet_b.name}** ({icon_b} {full_title_b})
 
 Total Rounds: {num_verses}
 
@@ -73,13 +88,9 @@ Total Rounds: {num_verses}
 """
         
         all_rounds_display = ""
-        
-        # Run all rounds
         for round_num in range(1, num_verses + 1):
             progress(0.05 + (0.75 * round_num / num_verses), 
                     desc=f"Round {round_num}/{num_verses}: Poets creating verses...")
-            
-            # Both poets create verses
             verse_a_data = poet_a.create_verse(document_text, poem_lines, round_num)
             verse_b_data = poet_b.create_verse(document_text, poem_lines, round_num)
             
@@ -88,8 +99,6 @@ Total Rounds: {num_verses}
             
             progress(0.05 + (0.75 * (round_num - 0.5) / num_verses), 
                     desc=f"Round {round_num}/{num_verses}: Judge evaluating...")
-            
-            # Judge evaluates
             poem_context = "\n".join([f"Line {i+1}: {line}" for i, line in enumerate(poem_lines)])
             judgment = judge.judge_verses(
                 document_text,
@@ -108,24 +117,24 @@ Total Rounds: {num_verses}
                 poem_lines.append(verse_b)
                 poet_names.append(poet_b.name)
             else:
-                # Tie - use higher score
                 if judgment['verse_a_total'] >= judgment['verse_b_total']:
                     poem_lines.append(verse_a)
                     poet_names.append(poet_a.name)
                 else:
                     poem_lines.append(verse_b)
                     poet_names.append(poet_b.name)
+            
             round_display = f"""
 ## Round {round_num}/{num_verses}
 
 ### Verses:
 
-**{poet_a.name} {poet_a_config['icon']}:**
+**{poet_a.name} {icon_a}:**
 > {verse_a}
 
 *Source: {verse_a_data['source']}*
 
-**{poet_b.name} {poet_b_config['icon']}:**
+**{poet_b.name} {icon_b}:**
 > {verse_b}
 
 *Source: {verse_b_data['source']}*
@@ -135,10 +144,10 @@ Total Rounds: {num_verses}
 ### Judge's Evaluation:
 
 **Scores:**
-- {poet_a.name}: **{judgment['verse_a_total']}/10**
-- {poet_b.name}: **{judgment['verse_b_total']}/10**
+- {poet_a.name}: **{judgment['verse_a_total']:.1f}/10**
+- {poet_b.name}: **{judgment['verse_b_total']:.1f}/10**
 
-**Winner: {judgment['winner']}** 🏆
+**Winner: {judgment['winner']}** 
 
 <details>
 <summary><b>Detailed Score Breakdown</b></summary>
@@ -176,34 +185,34 @@ Total Rounds: {num_verses}
         progress(0.85, desc="Generating final poem...")
         
         # Final poem
-        poem_display = "# 📜 Final Collaborative Poem\n\n"
+        poem_display = "#  Final Collaborative Poem\n\n"
         for i, (line, poet) in enumerate(zip(poem_lines, poet_names), 1):
-            poet_config = next((p for p in POET_PERSONAS.values() if p['name'] == poet), None)
-            icon = poet_config['icon'] if poet_config else ""
+            poet_config = POET_PERSONAS.get(persona_a if poet == poet_a.name else persona_b, {})
+            icon = poet_config.get('icon', '🎭')
             poem_display += f"**{i}.** {line} *— {icon} {poet}*\n\n"
         
         progress(0.90, desc="Calculating statistics...")
         stats = judge.get_final_statistics()
         
         stats_display = f"""
-# Final Statistics
+#  Final Statistics
 
 ## Round Victories
-- **{poet_a.name} {poet_a_config['icon']}:** {stats['poet_a_wins']} wins
-- **{poet_b.name} {poet_b_config['icon']}:** {stats['poet_b_wins']} wins
+- **{poet_a.name} {icon_a}:** {stats['poet_a_wins']} wins
+- **{poet_b.name} {icon_b}:** {stats['poet_b_wins']} wins
 
 ## Average Scores
-- **{poet_a.name}:** {stats['poet_a_avg_score']}/10
-- **{poet_b.name}:** {stats['poet_b_avg_score']}/10
+- **{poet_a.name}:** {stats['poet_a_avg_score']:.2f}/10
+- **{poet_b.name}:** {stats['poet_b_avg_score']:.2f}/10
 
 """
         
         if stats['poet_a_wins'] > stats['poet_b_wins']:
-            stats_display += f"### Overall Champion: {poet_a.name} {poet_a_config['icon']}!\n"
+            stats_display += f"###  Overall Champion: {poet_a.name} {icon_a}!\n"
         elif stats['poet_b_wins'] > stats['poet_a_wins']:
-            stats_display += f"### Overall Champion: {poet_b.name} {poet_b_config['icon']}!\n"
+            stats_display += f"###  Overall Champion: {poet_b.name} {icon_b}!\n"
         else:
-            stats_display += "### It's a Tie! Both poets performed equally well.\n"
+            stats_display += "###  It's a Tie! Both poets performed equally well.\n"
         
         progress(0.95, desc="Generating audio...")
         audio_path = None
@@ -217,13 +226,16 @@ Total Rounds: {num_verses}
         
         progress(1.0, desc="Complete!")
         
-        status = f"Poetry duel completed! {num_verses} rounds finished successfully."
+        status = f" Poetry duel completed! {num_verses} rounds finished successfully."
         
         return status, duel_info, all_rounds_display, poem_display, stats_display, audio_path
         
     except Exception as e:
-        return f"Error: {str(e)}", "", "", "", "", None
+        import traceback
+        error_msg = f" Error: {str(e)}\n\n{traceback.format_exc()}"
+        return error_msg, "", "", "", "", None
 
+# Create Gradio Interface
 with gr.Blocks(title="🎭 Poetry Duel Arena", theme=gr.themes.Soft()) as app:
     
     gr.Markdown("""
@@ -236,7 +248,7 @@ with gr.Blocks(title="🎭 Poetry Duel Arena", theme=gr.themes.Soft()) as app:
     
     with gr.Row():
         with gr.Column(scale=1):
-            gr.Markdown("### Step 1: Upload Document")
+            gr.Markdown("###  Step 1: Upload Document")
             file_input = gr.File(
                 label="Upload PDF, DOCX, TXT, or Image",
                 file_types=[".pdf", ".docx", ".txt", ".png", ".jpg", ".jpeg"]
@@ -273,7 +285,7 @@ with gr.Blocks(title="🎭 Poetry Duel Arena", theme=gr.themes.Soft()) as app:
             status_text = gr.Textbox(label="Status", interactive=False, lines=2)
         
         with gr.Column(scale=2):
-            gr.Markdown("###  Duel Information")
+            gr.Markdown("### ℹ Duel Information")
             duel_info = gr.Markdown("")
             
             gr.Markdown("###  Final Collaborative Poem")
@@ -291,7 +303,7 @@ with gr.Blocks(title="🎭 Poetry Duel Arena", theme=gr.themes.Soft()) as app:
     
     gr.Markdown("""
     ---
-    ###  About the Poets
+    ### 🎭 About the Poets
     
     Choose from multiple AI poet personas, each with unique styles:
     - **Aurora (Romantic) :** Emotion, nature metaphors, flowing rhythm
@@ -301,7 +313,7 @@ with gr.Blocks(title="🎭 Poetry Duel Arena", theme=gr.themes.Soft()) as app:
     - **Dali (Surrealist) :** Dream logic, bizarre imagery, subconscious
     - **Kerouac (Beat) :** Stream of consciousness, jazz rhythms, raw energy
     
-    ###  Judging Criteria
+    ### ⚖️ Judging Criteria
     - **Factual Grounding** (25%): Connection to document content
     - **Poetic Quality** (20%): Literary merit and craft
     - **Coherence** (20%): Flow with previous lines
@@ -309,7 +321,6 @@ with gr.Blocks(title="🎭 Poetry Duel Arena", theme=gr.themes.Soft()) as app:
     - **Emotional Impact** (15%): Ability to evoke feeling
     """)
     
-    # Connect button
     start_btn.click(
         fn=run_poetry_duel,
         inputs=[file_input, persona_a, persona_b, num_verses],
@@ -317,4 +328,4 @@ with gr.Blocks(title="🎭 Poetry Duel Arena", theme=gr.themes.Soft()) as app:
     )
 
 if __name__ == "__main__":
-    app.launch()
+    app.launch(share=False, server_name="0.0.0.0", server_port=7860)
