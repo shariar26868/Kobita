@@ -1,0 +1,13 @@
+# Environment variables and sensitive files
+.env
+*.env
+
+# Python cache and build files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+dist/
+*.egg-info/
